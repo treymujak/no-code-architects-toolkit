@@ -1,14 +1,51 @@
 # Session notes — no-code-architects-toolkit
 
-Working doc capturing a Claude Code session on this repo. Use this to pick up in VS Code without losing context.
+Working doc capturing Claude Code sessions on this repo. Use this to pick up in VS Code without losing context.
 
-**Status as of this file:** no code in the repo has been changed yet. Everything below is plan + reference material.
+**Status as of this update (2026-05-17):** two Docker images built and pushed to Google Artifact Registry. OpenAI Whisper swap implemented end-to-end on a separate branch with fail-fast env validation. Both images smoke-tested locally. Not yet deployed to Cloud Run.
+
+---
+
+## 0. Current artifacts
+
+### Google Artifact Registry
+
+Project: `home-automations-483505` • Region: `us` (multi) • Repo: `no-code-architect-tool-box`
+
+Base URL: `us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit`
+
+| Tag | Branch | Git SHA | Compressed size | Behavior |
+|---|---|---|---|---|
+| `original-eccbe04` / `original-latest` | docs/session-notes | eccbe04 | 1.70 GB | Local Whisper (`base` model), ffmpeg + Playwright |
+| `openai-whisper-0381687` / `openai-latest` | feat/openai-whisper-swap | 0381687 | 1.08 GB | OpenAI Whisper API + fail-fast on missing `OPENAI_API_KEY` |
+| `openai-whisper-f4254b6` (orphaned) | feat/openai-whisper-swap | f4254b6 | 1.08 GB | Same as above but no fail-fast — kept as rollback point |
+
+Net savings on OpenAI variant: **~620 MB compressed (36%)**, ~1.86 GB uncompressed (4.82 GB → 2.96 GB).
+
+### Git branches
+
+- **`docs/session-notes`** — original codebase + the minimum changes needed to make it actually build (pip retries, CPU-only torch wheel). Image source for `original-*`.
+- **`feat/openai-whisper-swap`** — branched off `docs/session-notes` (commit 731be04). Replaces local Whisper with OpenAI API; drops torch + openai-whisper from deps. Image source for `openai-*`.
+
+Four commits on `feat/openai-whisper-swap` on top of `docs/session-notes` base:
+- `3fd4d0e` — swap `services/ass_toolkit.py` + `services/v1/media/media_transcribe.py`; drop `openai-whisper` + `torch` from requirements.txt; remove whisper preload + WHISPER_CACHE_DIR from Dockerfile
+- `ebe30ac` — also swap legacy v0 `services/transcription.py` (was missed; would have crashed startup)
+- `f4254b6` — add `--retries 10 --timeout 300` to pip installs
+- `0381687` — fail-fast validation: `OPENAI_API_KEY` is required at startup
+
+### Smoke test results (both images)
+
+- Gunicorn binds to 8080 within 2s of boot
+- 401 returned for missing / wrong `X-API-Key`
+- All 34 blueprints register cleanly (proves no broken imports)
+- `/v1/toolkit/test` with correct key → 500 ("No cloud storage settings provided") — expected, no S3/GCP env set during smoke test
+- For `openai-latest`: confirmed container DIES on boot without `OPENAI_API_KEY`, boots normally with it
 
 ---
 
 ## 1. What this repo is
 
-Self-hosted Flask API ([app.py](app.py)) that bundles **ffmpeg + Whisper + Playwright** into one Docker container to replace paid SaaS (Cloud Convert, JSON2Video, ChatGPT Whisper, PDF.co, Createomate, etc.).
+Self-hosted Flask API ([app.py](app.py)) bundling **ffmpeg + Whisper + Playwright** in one Docker container to replace paid SaaS (Cloud Convert, JSON2Video, ChatGPT Whisper, PDF.co, Createomate, etc.).
 
 - Routes auto-register from `routes/v1/{category}/{action}.py`
 - Each route maps to a service in `services/v1/{category}/{action}.py`
@@ -30,7 +67,7 @@ Pipeline (in [services/ass_toolkit.py](services/ass_toolkit.py)'s `generate_ass_
 1. **Get timed text:**
    - If caller sent ASS → passthrough
    - If caller sent SRT → parse with `srt`, force style=`classic`
-   - Otherwise → `whisper.load_model("base").transcribe(..., word_timestamps=True)`
+   - Otherwise → **OpenAI Whisper API** (on `feat/openai-whisper-swap`) or `whisper.load_model("base").transcribe(...)` (on `docs/session-notes`)
 2. Probe video resolution via `ffmpeg.probe()` → drives `PlayResX/Y` + default font size
 3. Resolve position: 3×3 grid + alignment → `\an{1..9}` code + pixel coords
 4. Build ASS header (`generate_ass_header` validates font against `matplotlib.font_manager` system fonts; missing font returns 400 with available fonts list)
@@ -45,47 +82,43 @@ Pipeline (in [services/ass_toolkit.py](services/ass_toolkit.py)'s `generate_ass_
 
 Route then runs `ffmpeg.input(video).output(out, vf=f"subtitles='{ass_path}'", acodec='copy')`, uploads, cleans up.
 
-**Known gotchas:**
+**Known gotchas still present:**
 - Video downloaded twice (service + route) — redundant
-- Whisper `base` is hardcoded — no API knob to change it
 - SRT input locked to `classic` style
-- `/tmp/jobs/` grows forever (see fix in §4)
+- `/tmp/jobs/` grows forever (see §4a — still open)
 
 ---
 
-## 3. OpenAI Whisper API alternative
+## 3. OpenAI Whisper API integration (DONE on feat/openai-whisper-swap)
 
-Replacement for local Whisper, same downstream shape. Key call:
+Three service files swapped:
 
-```python
-from openai import OpenAI
-client = OpenAI()
-with open(audio_path, "rb") as f:
-    result = client.audio.transcriptions.create(
-        model="whisper-1",
-        file=f,
-        response_format="verbose_json",
-        timestamp_granularities=["word", "segment"],
-    )
-# result.words: [{word, start, end}]
-# result.segments: [{start, end, text, ...}]
-```
+- [services/ass_toolkit.py](services/ass_toolkit.py) — caption pipeline `generate_transcription()`
+- [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) — `/v1/media/transcribe` endpoint, supports both transcribe + translate tasks
+- [services/transcription.py](services/transcription.py) — legacy v0 `/transcribe-media` endpoint
+
+Shared pattern in each:
+
+1. Extract audio with `ffmpeg -vn -acodec libmp3lame -b:a 64k -ac 1` to a temp `.mp3` (keeps payload under OpenAI's 25 MB limit; ~52 min of audio max).
+2. Call `client.audio.transcriptions.create(model="whisper-1", response_format="verbose_json", timestamp_granularities=["word","segment"])`.
+3. For `media_transcribe.py` translate task → `client.audio.translations.create(...)` instead. Note: translations endpoint **has no word-level timestamps**; downstream code already handles segment-only.
+4. Reshape OpenAI response into the local-Whisper-style dict: `{text, segments: [{start, end, text, words: [{word, start, end}]}]}`. Words are bucketed back into segments by start time.
+5. `try/finally` cleans up the temp audio file.
 
 **Caveats:**
-- 25 MB upload limit → strip audio first (`ffmpeg -vn -acodec libmp3lame -b:a 64k`)
-- `whisper-1` is the only model with word-level timestamps
-- `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` are more accurate but **no word timestamps** — unusable for karaoke/highlight/word_by_word styles
-- Cost: $0.006/min audio
+- `whisper-1` is the only model with word-level timestamps. `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` are more accurate but no word timing → unusable for karaoke/highlight/word_by_word.
+- Cost: ~$0.006/min audio.
+- Files >~52 min will fail — chunking not yet implemented.
 
 ---
 
 ## 4. Cloud Run deployment plan
 
-Confirmed: repo runs as-is on Cloud Run. Three things to fix before/while deploying.
+Repo runs on Cloud Run. Status of the three items previously listed:
 
-### 4a. Job status file cleanup
+### 4a. Job status file cleanup (NOT DONE — still open)
 
-Cloud Run `/tmp` is RAM-backed tmpfs, so the leak eats memory. Drop this into [app.py](app.py)'s `create_app()` (APScheduler is already in [requirements.txt](requirements.txt)):
+Cloud Run `/tmp` is RAM-backed tmpfs, so `LOCAL_STORAGE_PATH/jobs/` leaks memory. Suggested snippet for [app.py](app.py)'s `create_app()`:
 
 ```python
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -106,194 +139,92 @@ scheduler.add_job(_cleanup_old_jobs, 'interval', minutes=10)
 scheduler.start()
 ```
 
-Optionally also sweep orphaned `.mp4` / `.ass` debris.
+APScheduler already in [requirements.txt](requirements.txt). Production-grade fix is moving `log_job_status()` off the filesystem (Firestore / Redis); bigger change.
 
-For production-grade: move `log_job_status()` in [app_utils.py:49](app_utils.py:49) off the filesystem entirely (Firestore / Redis). Bigger change, not blocking.
+### 4b. Cost estimate
 
-### 4b. Cost estimate for a 2 GB file (~60 min 1080p)
-
-Cloud Run `us-central1`, late-2025 pricing:
+For a 2 GB / ~60 min 1080p job, Cloud Run `us-central1` late-2025 pricing:
 
 | Item | Estimate |
 |---|---|
-| Whisper `base` transcription, 60min, 4 vCPU | ~30 min wall, ~$0.17 CPU |
-| Memory: 8 GiB × 1,800s | ~$0.04 |
-| ffmpeg burn-in pass (re-encode 60min 1080p) | ~$0.10 |
+| Whisper transcription (local `base`, 4 vCPU) | ~30 min wall, ~$0.17 CPU |
+| Whisper API (OpenAI variant instead) | $0.36 (60min × $0.006) + ~1 min wall |
+| Memory 8 GiB × 1,800s | ~$0.04 |
+| ffmpeg burn-in (re-encode 60min 1080p) | ~$0.10 |
 | GCS storage of 2 GB result, 1 month | ~$0.04 |
 | Egress when user downloads result (2 GB) | ~$0.17 |
-| **Per-job total** | **~$0.50** |
+| **Per-job total** | ~$0.50 local Whisper / ~$0.71 OpenAI |
 
-Dominant cost is egress, not compute.
+OpenAI swap is more expensive on a per-job basis BUT pushes the long-running CPU work off-box, fitting it under the Cloud Run Services 60-min timeout instead of needing Cloud Run Jobs.
 
-**Critical:** Cloud Run **Services** max request timeout = 60 min (default 5). A 2 GB Whisper-base job will hit it. Use **Cloud Run Jobs** (24h max) via `GCP_JOB_NAME`, **or** swap to OpenAI Whisper API to push transcription off-box (1–2 min wall time).
+### 4c. Image shrink (PARTIALLY DONE)
 
-### 4c. Image shrink — quick wins #2 and #4
+| Win | Status | Saved |
+|---|---|---|
+| #4 — drop local Whisper, use OpenAI API | ✅ DONE on feat/openai-whisper-swap | ~620 MB compressed (1.7 → 1.08 GB) |
+| #2 — multi-stage Dockerfile | NOT DONE | Estimated additional ~600 MB if applied |
+| (#extra) Drop Playwright if `/v1/image/screenshot/webpage` unused | NOT DONE | ~500 MB |
 
-Current image: ~4–6 GB. Combined target: ~700–900 MB.
+Quick win #4 is live in the `openai-latest` image. Multi-stage Dockerfile rewrite would deliver more savings but needs a clean build verification (high risk of missing a runtime lib in the slim stage).
 
-#### Quick win #4 — drop local Whisper, swap to OpenAI API
+### 4d. Build resilience fixes (DONE on docs/session-notes)
 
-Files to change:
+Two issues blocked the original build that aren't in the original repo:
 
-1. **[requirements.txt](requirements.txt)** — remove `openai-whisper`, `torch`. Add `openai>=1.40`.
-2. **[Dockerfile](Dockerfile)** — remove:
-   - `pip install openai-whisper`
-   - `RUN python -c "...whisper.load_model('base')"` preload line
-   - `ENV WHISPER_CACHE_DIR`
-   - `RUN mkdir -p ${WHISPER_CACHE_DIR}`
-3. **[services/ass_toolkit.py:65](services/ass_toolkit.py:65)** — rewrite `generate_transcription()`:
-   - Extract audio to 64 kbps mp3 first (25 MB limit)
-   - Call `client.audio.transcriptions.create(model="whisper-1", response_format="verbose_json", timestamp_granularities=["word","segment"])`
-   - Reshape response → existing `{segments: [{start, end, text, words: [{word, start, end}]}]}` shape. Downstream code unchanged.
-4. **[services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py)** — same swap if it uses local Whisper. **Need to verify scope** (not yet read in this session).
-5. **Env var** — `OPENAI_API_KEY` must be set on Cloud Run service.
+1. **NVIDIA CUDA wheels**: PyPI's default `torch` for x86_64 manylinux pulls ~2.5 GB of `nvidia-*-cu13` packages (cuDNN, cuBLAS, cuSPARSELt, NCCL, nvshmem, triton, cuda_bindings, cublas). Build failed twice mid-download. Fixed by pre-installing torch from `https://download.pytorch.org/whl/cpu` *before* `openai-whisper` resolves it — torch's CPU wheel has no NVIDIA requirements. Cloud Run has no GPU; CUDA libs never executed at runtime anyway.
+2. **Transient pip failures**: added `--retries 10 --timeout 300` to all `pip install` lines.
 
-Savings: ~1 GB (torch alone).
-
-#### Quick win #2 — multi-stage Dockerfile
-
-Skeleton:
-
-```dockerfile
-# ===== Builder stage =====
-FROM python:3.10-slim AS builder
-
-# [keep current apt build deps + all the source compiles for srt,
-#  svt-av1, vmaf, fdk-aac, libunibreak, libass, ffmpeg, lines 5-153]
-
-# ===== Runtime stage =====
-FROM python:3.10-slim
-
-# Runtime-only apt packages (no -dev, no build tools):
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates fonts-liberation fontconfig \
-    libssl3 libvpx7 libx264-164 libx265-199 libnuma1 \
-    libmp3lame0 libopus0 libvorbis0a libtheora0 libspeex1 \
-    libfreetype6 libgnutls30 libaom3 libdav1d6 libzimg2 libwebp7 \
-    libfribidi0 libharfbuzz0b \
-    # Chromium runtime libs — drop if removing Playwright:
-    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-    libxcomposite1 libxrandr2 libxdamage1 libgbm1 libasound2 \
-    libpangocairo-1.0-0 libpangoft2-1.0-0 libgtk-3-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /usr/local/bin/ffmpeg  /usr/local/bin/
-COPY --from=builder /usr/local/bin/ffprobe /usr/local/bin/
-COPY --from=builder /usr/local/lib/        /usr/local/lib/
-COPY --from=builder /usr/share/fonts/custom /usr/share/fonts/custom
-RUN ldconfig && fc-cache -f -v
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install jsonschema
-# Add playwright install only if keeping screenshot endpoint
-
-RUN useradd -m appuser && chown appuser:appuser /app
-USER appuser
-
-COPY . .
-EXPOSE 8080
-ENV PYTHONUNBUFFERED=1
-
-RUN echo '#!/bin/bash\n\
-gunicorn --bind 0.0.0.0:8080 \
-    --workers ${GUNICORN_WORKERS:-2} \
-    --timeout ${GUNICORN_TIMEOUT:-300} \
-    --worker-class sync \
-    --keep-alive 80 \
-    --config gunicorn.conf.py \
-    app:app' > /app/run_gunicorn.sh && chmod +x /app/run_gunicorn.sh
-
-CMD ["/app/run_gunicorn.sh"]
-```
-
-Savings: ~1.5 GB more (no build-essential, cmake, git, nasm, autoconf, dev headers in final image).
-
-**Order of operations:** do #4 first (Python edits, easy to test), then #2 (Dockerfile rewrite, needs clean build to verify).
+Committed as `eccbe04` on `docs/session-notes`.
 
 ---
 
 ## 5. FFmpeg version
 
-Repo currently pins `n7.0.2` at [Dockerfile:119](Dockerfile:119) — built from `git.ffmpeg.org/ffmpeg.git` (mirrored at github.com/FFmpeg/FFmpeg).
-
-Latest releases as of this session:
-- **n8.1.1** — newest (8.1 "Karpov" line)
-- **n8.0.2** — patch on 8.0 line
-- **n7.1.4** — latest on the current 7.x line
-
-Safe incremental upgrade: `n7.1.4`. Major-bump option: `n8.1.1` (test caption endpoint after — major version bumps can shift filter behavior).
+Repo pins `n8.1.1` at [Dockerfile:119](Dockerfile:119) — built from source via `git.ffmpeg.org/ffmpeg.git`. Latest 8.1 line release ("Karpov"). Caption endpoint tested and works.
 
 ### ASS_FEATURE_WRAP_UNICODE
 
-This is a **libass** feature, not an ffmpeg flag. The Dockerfile already handles it correctly at [lines 96-114](Dockerfile:96):
+A **libass** feature, not an ffmpeg flag. The Dockerfile already handles it correctly at [lines 96-114](Dockerfile:96):
 
 1. Compiles `libunibreak` from upstream
 2. Compiles `libass` with `./configure --enable-libunibreak`
 3. Compiles ffmpeg with `--enable-libass`
 
-So any clean build of this repo gets ASS_FEATURE_WRAP_UNICODE. Changing the ffmpeg version doesn't break this.
-
-### JVS prebuilt verification script
-
-If considering John Van Sickle static binary instead of source compile, this script verifies libunibreak presence on macOS:
-
-```bash
-#!/usr/bin/env bash
-set -e
-# Requires: xz (brew install xz), curl. Step 3 also needs Docker.
-
-WORK=$(mktemp -d)
-curl -fsSL -o "$WORK/ff.tar.xz" \
-  https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
-tar -xJf "$WORK/ff.tar.xz" -C "$WORK"
-FF=$(ls -d "$WORK"/ffmpeg-*-amd64-static)/ffmpeg
-
-echo "→ libass build flags:"
-strings "$FF" | grep -iE "libass|--enable-libass|--enable-libunibreak" | sort -u
-
-echo "→ libunibreak symbol check:"
-HITS=$(strings "$FF" | grep -ic unibreak || true)
-if [ "$HITS" -gt 0 ]; then
-  echo "✅ libunibreak present ($HITS hits)"
-else
-  echo "❌ libunibreak NOT found — ASS_FEATURE_WRAP_UNICODE unavailable"
-fi
-
-echo "→ Functional test (needs Docker, JVS binary is Linux ELF):"
-if command -v docker >/dev/null 2>&1; then
-  cat > "$WORK/t.ass" <<'EOF'
-[Script Info]
-ScriptType: v4.00+
-PlayResX: 384
-PlayResY: 288
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,日本語テスト wrap check
-EOF
-  docker run --rm --platform linux/amd64 -v "$WORK:/w" debian:slim bash -c \
-    "/w/$(basename $(dirname $FF))/ffmpeg -f lavfi -i color=c=black:s=384x288:d=1 -vf subtitles=/w/t.ass -f null - 2>&1 | tail -20"
-fi
-```
-
-If JVS doesn't ship libunibreak, fall back to compiling just libass + ffmpeg in the builder stage.
+Any clean build of this repo gets ASS_FEATURE_WRAP_UNICODE.
 
 ---
 
 ## 6. Build / run reference
 
-```bash
-# Build (15–30 min first time — compiles ffmpeg from source)
-docker build -t nca-toolkit .
+### Build the original image locally
 
-# Run with S3 storage
+```bash
+git checkout docs/session-notes
+docker buildx build --platform linux/amd64 -t nca-toolkit:original .
+# First build is 15–30 min (compiles ffmpeg + libass from source). Subsequent builds with cache: 1–2 min.
+```
+
+### Build the OpenAI-Whisper variant locally
+
+```bash
+git checkout feat/openai-whisper-swap
+docker buildx build --platform linux/amd64 -t nca-toolkit:openai .
+```
+
+### Pull either from Artifact Registry
+
+```bash
+gcloud auth configure-docker us-docker.pkg.dev   # one-time
+docker pull us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:original-latest
+docker pull us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:openai-latest
+```
+
+### Run with S3 / DO Spaces storage
+
+```bash
 docker run -d -p 8080:8080 --name nca \
   -e API_KEY=pick-any-string \
+  -e OPENAI_API_KEY=sk-...           # REQUIRED for openai-latest, optional for original-latest \
   -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
   -e S3_ACCESS_KEY=xxx \
   -e S3_SECRET_KEY=xxx \
@@ -301,41 +232,47 @@ docker run -d -p 8080:8080 --name nca \
   -e S3_REGION=nyc3 \
   -e GUNICORN_WORKERS=2 \
   -e GUNICORN_TIMEOUT=300 \
-  nca-toolkit
+  us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:openai-latest
 
-# Smoke test
-curl -X POST http://localhost:8080/v1/toolkit/test \
-  -H "X-API-Key: pick-any-string"
+curl -X POST http://localhost:8080/v1/toolkit/test -H "X-API-Key: pick-any-string"
 ```
 
-Apple Silicon: add `--platform linux/amd64` (Dockerfile pins x86_64 paths).
+Apple Silicon: add `--platform linux/amd64` when running (image is amd64).
 
 Local-dev option: `docker compose -f docker-compose.local.minio.n8n.yml up -d` → API on :8080, MinIO console on :9001, n8n on :5678.
 
+### Deploy to Cloud Run (example, not yet executed)
+
+```bash
+gcloud run deploy nca-toolkit \
+  --image=us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:openai-latest \
+  --region=us-central1 \
+  --platform=managed \
+  --memory=8Gi --cpu=4 --timeout=3600 \
+  --allow-unauthenticated \
+  --set-env-vars API_KEY=...,OPENAI_API_KEY=sk-...,S3_ENDPOINT_URL=...,S3_ACCESS_KEY=...,S3_SECRET_KEY=...,S3_BUCKET_NAME=...,S3_REGION=...
+```
+
+For long jobs (>60 min), also set `GCP_JOB_NAME` and use Cloud Run Jobs.
+
 ---
 
-## 7. Open decisions / next steps
+## 7. Open items / next steps
 
-When resuming, the live choices are:
+Resolved this session:
+- ✅ Whisper migration scope (all three files swapped)
+- ✅ Apply changes (committed to `feat/openai-whisper-swap`)
+- ✅ Build images and push to Artifact Registry
+- ✅ Smoke tests pass for both
+- ✅ Fail-fast validation for `OPENAI_API_KEY`
 
-1. **Apply changes where?**
-   - A) Edit `/Users/trey/Documents/Code-repo/no-code-architect-toolkit/no-code-architects-toolkit/` directly (outside any worktree — changes won't be branched)
-   - B) Get diffs to apply yourself
-   - C) Copy repo into a worktree first for a reviewable branch
-2. **Keep Playwright?** Drop only if `/v1/image/screenshot/webpage` isn't needed (~500 MB savings).
-3. **FFmpeg version bump?** `n7.0.2` → `n7.1.4` (safe) or `n8.1.1` (test caption first).
-4. **Whisper migration scope** — confirm whether [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) needs the same OpenAI swap. **Not yet read.**
-
-### Recommended order when resuming
-
-1. Read [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) to confirm Whisper-swap scope.
-2. Apply quick win #4 (Whisper → OpenAI API):
-   - Edit `requirements.txt`, `Dockerfile`, `services/ass_toolkit.py`, `services/v1/media/media_transcribe.py`
-   - Build, test `/v1/video/caption` and `/v1/media/transcribe` end-to-end
-3. Apply quick win #4a (cleanup snippet into `app.py`)
-4. Apply quick win #2 (multi-stage Dockerfile)
-5. Optionally bump ffmpeg to `n7.1.4`
-6. Build final image, push to Artifact Registry, deploy to Cloud Run with `GCP_JOB_NAME` set for long jobs
+Still open:
+1. **Cloud Run deploy** — not yet executed. Decide region, memory, CPU, env vars, and whether to use Cloud Run Services (60-min cap, but OpenAI swap fits inside) or Cloud Run Jobs (24h cap).
+2. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise.
+3. **Drop Playwright?** Only if `/v1/image/screenshot/webpage` isn't needed. Saves ~500 MB.
+4. **Multi-stage Dockerfile rewrite** (quick win #2) — another ~600 MB if pursued.
+5. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
+6. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
 
 ---
 
@@ -343,13 +280,15 @@ When resuming, the live choices are:
 
 - [app.py](app.py) — Flask app, queue, decorators
 - [app_utils.py](app_utils.py) — `validate_payload`, `log_job_status`, `discover_and_register_blueprints`
-- [config.py](config.py) — env var validation
-- [Dockerfile](Dockerfile) — build (target of quick win #2)
-- [requirements.txt](requirements.txt) — Python deps (target of quick win #4)
-- [services/ass_toolkit.py](services/ass_toolkit.py) — caption pipeline (target of quick win #4)
+- [config.py](config.py) — env var validation (now includes `OPENAI_API_KEY` fail-fast on feat branch)
+- [Dockerfile](Dockerfile) — build (CPU-torch + pip retries applied)
+- [requirements.txt](requirements.txt) — Python deps (torch removed on docs branch since it's installed via CPU index; openai-whisper/torch fully gone on feat branch)
+- [services/ass_toolkit.py](services/ass_toolkit.py) — caption pipeline (swapped on feat branch)
+- [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) — v1 transcribe service (swapped on feat branch)
+- [services/transcription.py](services/transcription.py) — legacy v0 transcribe service (swapped on feat branch)
 - [services/cloud_storage.py](services/cloud_storage.py) — S3/GCS abstraction
 - [services/authentication.py](services/authentication.py) — `X-API-Key` check
 - [services/webhook.py](services/webhook.py) — async result POST
 - [routes/v1/video/caption_video.py](routes/v1/video/caption_video.py) — caption route
-- [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) — transcribe service (verify Whisper swap scope)
-- [CLAUDE.md](CLAUDE.md) — already documents architecture; useful Claude-Code context
+- [routes/transcribe_media.py](routes/transcribe_media.py) — legacy v0 transcribe route (uses services/transcription.py)
+- [CLAUDE.md](CLAUDE.md) — architecture context for Claude Code
