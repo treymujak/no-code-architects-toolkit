@@ -2,7 +2,7 @@
 
 Working doc capturing Claude Code sessions on this repo. Use this to pick up in VS Code without losing context.
 
-**Status as of this update (2026-05-17):** two Docker images built and pushed to Google Artifact Registry. OpenAI Whisper swap implemented end-to-end on a separate branch with fail-fast env validation. Both images smoke-tested locally. Not yet deployed to Cloud Run.
+**Status as of this update (2026-05-18):** three Docker images built. OpenAI Whisper swap done. CVE remediation done — multi-stage rewrite, Playwright dropped, gnutls removed, base packages upgraded. Original 21-CVE list: 20 closed, 1 unfixable upstream. Final image (`secured-v4`) has 6 remaining HIGH findings, all upstream-unfixed and assessed as unreachable in this app. Not yet deployed to Cloud Run.
 
 ---
 
@@ -16,11 +16,13 @@ Base URL: `us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/
 
 | Tag | Branch | Git SHA | Compressed size | Behavior |
 |---|---|---|---|---|
-| `original-eccbe04` / `original-latest` | docs/session-notes | eccbe04 | 1.70 GB | Local Whisper (`base` model), ffmpeg + Playwright |
+| `original-eccbe04` / `original-latest` | docs/session-notes | eccbe04 | 1.70 GB | Local Whisper (`base` model), ffmpeg + Playwright + gnutls |
 | `openai-whisper-0381687` / `openai-latest` | feat/openai-whisper-swap | 0381687 | 1.08 GB | OpenAI Whisper API + fail-fast on missing `OPENAI_API_KEY` |
 | `openai-whisper-f4254b6` (orphaned) | feat/openai-whisper-swap | f4254b6 | 1.08 GB | Same as above but no fail-fast — kept as rollback point |
+| `secured-v4` / `secured-latest` | docs/session-notes | (this commit) | TBD | Multi-stage, no Playwright, no gnutls, no python3.13. **Current shipping candidate.** |
 
 Net savings on OpenAI variant: **~620 MB compressed (36%)**, ~1.86 GB uncompressed (4.82 GB → 2.96 GB).
+`secured-v4` is **3.08 GB uncompressed** — keeps local Whisper but adds multi-stage + drops Playwright/gnutls. Equivalent OpenAI build (drop whisper preload) would land near 2.4 GB uncompressed.
 
 ### Git branches
 
@@ -157,15 +159,15 @@ For a 2 GB / ~60 min 1080p job, Cloud Run `us-central1` late-2025 pricing:
 
 OpenAI swap is more expensive on a per-job basis BUT pushes the long-running CPU work off-box, fitting it under the Cloud Run Services 60-min timeout instead of needing Cloud Run Jobs.
 
-### 4c. Image shrink (PARTIALLY DONE)
+### 4c. Image shrink (DONE)
 
 | Win | Status | Saved |
 |---|---|---|
 | #4 — drop local Whisper, use OpenAI API | ✅ DONE on feat/openai-whisper-swap | ~620 MB compressed (1.7 → 1.08 GB) |
-| #2 — multi-stage Dockerfile | NOT DONE | Estimated additional ~600 MB if applied |
-| (#extra) Drop Playwright if `/v1/image/screenshot/webpage` unused | NOT DONE | ~500 MB |
+| #2 — multi-stage Dockerfile | ✅ DONE on docs/session-notes ([Dockerfile.multistage](Dockerfile.multistage)) | ~1.76 GB uncompressed (4.82 → 3.08 GB) |
+| Drop Playwright + screenshot endpoint | ✅ DONE on docs/session-notes | included in above |
 
-Quick win #4 is live in the `openai-latest` image. Multi-stage Dockerfile rewrite would deliver more savings but needs a clean build verification (high risk of missing a runtime lib in the slim stage).
+`secured-v4` is the result. Multi-stage discarded ~620 MB of compilers/headers (nasm, ninja-build, cmake, meson, build-essential, all `-dev` libs). Dropping Playwright removed Chromium runtime libs (libnss3, libcups2t64, libgtk-3-0t64, etc.).
 
 ### 4d. Build resilience fixes (DONE on docs/session-notes)
 
@@ -257,7 +259,59 @@ For long jobs (>60 min), also set `GCP_JOB_NAME` and use Cloud Run Jobs.
 
 ---
 
-## 7. Open items / next steps
+## 7. Security hardening (DONE on docs/session-notes)
+
+Triaged a 21-CVE scan against the original image. End state: `nca-toolkit:secured-v4` has **0 CRITICAL, 6 HIGH** — all 6 are upstream-unfixed and assessed unreachable in this app (mitigation notes below).
+
+### 7a. What changed
+
+Single artifact: [Dockerfile.multistage](Dockerfile.multistage). Plus deletions: [routes/v1/image/screenshot_webpage.py](routes/v1/image/screenshot_webpage.py), [services/v1/image/screenshot_webpage.py](services/v1/image/screenshot_webpage.py).
+
+Five remediation moves:
+
+1. **Multi-stage split.** Builder stage compiles ffmpeg/libass stack and is discarded. Runtime stage gets only shared libraries — no compilers, no `ninja-build`. Closes CVE-2026-7210 (python3.13 was pulled in by `ninja-build`→`python3`), CVE-2026-23949 (`python3-jaraco.context` was pulled in by python3), CVE-2026-6069 (nasm builder-only).
+2. **Playwright dropped.** Removed Chromium runtime libs (libnss3, libcups2t64, libatk1.0-0t64, libgtk-3-0t64 etc.) plus pip + `playwright install` + the two screenshot files. Closes CVE-2026-6766/6772 (nss), CVE-2026-34980 (cups), CVE-2026-40393 (mesa was a transitive of the Chromium stack).
+3. **Base packages upgraded.** Added `apt-get -y upgrade` to the runtime stage. Pulled trixie 13.4 → 13.5 point release. Closes CVE-2026-4878 (libcap2), CVE-2026-29111 (systemd), CVE-2026-4046 / CVE-2026-4437 (glibc), CVE-2026-6732 (libxml2), CVE-2026-5121 / CVE-2026-4111 / CVE-2026-4424 (libarchive).
+4. **Python pip pins**: `wheel>=0.46.2`, `setuptools>=80.0`, `jaraco.context>=6.1.0`. Latest setuptools also vendors the patched jaraco.context internally. Closes CVE-2026-24049 (wheel) and seals the jaraco.context CVE both at top-level and vendored-inside-setuptools.
+5. **Gnutls removed.** ffmpeg rebuilt without `--enable-gnutls`. SRT switched to its openssl backend (`-DUSE_ENCLIB=openssl`). `wget` removed (its libgnutls30t64 dep). Closes all 5 gnutls28 CVEs: CVE-2026-42010, -33845, -42011, -33846, -3833.
+
+Also: dropped `--enable-libtheora` from the ffmpeg configure line and `libtheora-dev` from apt. Closes CVE-2026-5673.
+
+### 7b. Why gnutls removal was safe (hypothesis test)
+
+Static analysis: every `ffmpeg.input(...)` callsite in the app receives a local filesystem path. URL fetches go through Python `requests` (OpenSSL via stdlib `ssl`), not ffmpeg. Zero RTMP / SRT-URL / DTLS / SRTP references in the codebase.
+
+Runtime test (on `secured-v2`, before gnutls removal): traced ffmpeg processing a local file with strace + ltrace. **0 TCP connections, 0 `AF_INET` sockets**. The only gnutls calls were `gnutls_global_init()` / `gnutls_global_deinit()` — lifecycle hooks that run unconditionally because ffmpeg's protocol registry initializes the TLS handler at startup. **No `gnutls_handshake()`, no `gnutls_dtls_*()`, no `gnutls_x509_*()` validation** — and those are precisely where the 5 CVEs live.
+
+Removing `--enable-gnutls` removed the library linkage entirely.
+
+### 7c. Remaining 6 HIGH findings (accepted)
+
+All upstream-unfixed at scan time. Mitigation rationale:
+
+| Package | CVE | Why unreachable here |
+|---|---|---|
+| libexpat1 ×2 | CVE-2026-25210, CVE-2026-45186 | Pulled in by `libfontconfig1`. Expat only parses static `/etc/fonts/*.conf` system files. Zero `import xml` / XML parsing in app code — JSON throughout. No attacker-controlled XML reaches expat. |
+| ncurses ×4 (libncursesw6, libtinfo6, ncurses-base, ncurses-bin) | CVE-2025-69720 | Buffer overflow exploitable only via crafted terminal escape sequences to a curses process. App doesn't use ncurses; Cloud Run containers have no TTY; nothing in the request path reaches a curses consumer. |
+
+Re-check on next scheduled rebuild (Debian usually ships fixes within weeks).
+
+### 7d. Build + scan reference
+
+```bash
+# Build
+docker buildx build --platform linux/amd64 -f Dockerfile.multistage -t nca-toolkit:secured-v4 .
+
+# Verify gnutls + python3.13 gone
+docker run --rm nca-toolkit:secured-v4 bash -c "dpkg -l | grep -E 'python3|gnutls' || echo CLEAN"
+
+# Scan
+trivy image --severity CRITICAL,HIGH --scanners vuln nca-toolkit:secured-v4
+```
+
+---
+
+## 8. Open items / next steps
 
 Resolved this session:
 - ✅ Whisper migration scope (all three files swapped)
@@ -265,23 +319,26 @@ Resolved this session:
 - ✅ Build images and push to Artifact Registry
 - ✅ Smoke tests pass for both
 - ✅ Fail-fast validation for `OPENAI_API_KEY`
+- ✅ Multi-stage Dockerfile rewrite ([Dockerfile.multistage](Dockerfile.multistage))
+- ✅ Playwright dropped
+- ✅ CVE remediation (20/21 closed, 6 remaining all unreachable)
 
 Still open:
 1. **Cloud Run deploy** — not yet executed. Decide region, memory, CPU, env vars, and whether to use Cloud Run Services (60-min cap, but OpenAI swap fits inside) or Cloud Run Jobs (24h cap).
-2. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise.
-3. **Drop Playwright?** Only if `/v1/image/screenshot/webpage` isn't needed. Saves ~500 MB.
-4. **Multi-stage Dockerfile rewrite** (quick win #2) — another ~600 MB if pursued.
-5. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
-6. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
+2. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise. (Deferred.)
+3. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
+4. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
+5. **Apply multi-stage pattern to OpenAI variant** — copy [Dockerfile.multistage](Dockerfile.multistage) to that branch with whisper preload + WHISPER_CACHE_DIR removed.
 
 ---
 
-## 8. Key file paths for VS Code
+## 9. Key file paths for VS Code
 
 - [app.py](app.py) — Flask app, queue, decorators
 - [app_utils.py](app_utils.py) — `validate_payload`, `log_job_status`, `discover_and_register_blueprints`
 - [config.py](config.py) — env var validation (now includes `OPENAI_API_KEY` fail-fast on feat branch)
-- [Dockerfile](Dockerfile) — build (CPU-torch + pip retries applied)
+- [Dockerfile](Dockerfile) — original single-stage build (CPU-torch + pip retries applied)
+- [Dockerfile.multistage](Dockerfile.multistage) — secured multi-stage build (no Playwright, no gnutls, no python3.13)
 - [requirements.txt](requirements.txt) — Python deps (torch removed on docs branch since it's installed via CPU index; openai-whisper/torch fully gone on feat branch)
 - [services/ass_toolkit.py](services/ass_toolkit.py) — caption pipeline (swapped on feat branch)
 - [services/v1/media/media_transcribe.py](services/v1/media/media_transcribe.py) — v1 transcribe service (swapped on feat branch)
