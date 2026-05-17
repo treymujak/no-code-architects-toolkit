@@ -24,6 +24,12 @@ API_KEY = os.environ.get('API_KEY')
 if not API_KEY:
     raise ValueError("API_KEY environment variable is not set")
 
+# OpenAI API key for hosted Whisper transcription/translation calls.
+# Fail fast at startup rather than at first /v1/video/caption or /v1/media/transcribe request.
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is not set")
+
 # Storage path setting
 LOCAL_STORAGE_PATH = os.environ.get('LOCAL_STORAGE_PATH', '/tmp')
 
