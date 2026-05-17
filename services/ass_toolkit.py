@@ -20,7 +20,8 @@ import os
 import ffmpeg
 import logging
 import subprocess
-import whisper
+import tempfile
+from openai import OpenAI
 from datetime import timedelta
 import srt
 import re
@@ -62,21 +63,74 @@ def rgb_to_ass_color(rgb_color):
             return f"&H00{b:02X}{g:02X}{r:02X}"
     return "&H00FFFFFF"
 
+def _extract_audio_for_openai(media_path):
+    """Strip media to a 64kbps mono mp3 to stay under OpenAI's 25MB upload limit.
+
+    Returns the temp audio path; caller is responsible for deletion.
+    At 64kbps, the limit allows ~52 minutes of audio.
+    """
+    fd, audio_path = tempfile.mkstemp(suffix=".mp3", dir=LOCAL_STORAGE_PATH)
+    os.close(fd)
+    (
+        ffmpeg
+        .input(media_path)
+        .output(audio_path, vn=None, acodec="libmp3lame", audio_bitrate="64k", ac=1)
+        .overwrite_output()
+        .run(quiet=True)
+    )
+    return audio_path
+
+
+def _bucket_words_into_segments(words, segments):
+    """OpenAI returns a flat word list; reshape into per-segment word lists."""
+    buckets = [[] for _ in segments]
+    if not words:
+        return buckets
+    i = 0
+    for w in words:
+        w_start = w.start
+        while i < len(segments) - 1 and w_start >= segments[i].end:
+            i += 1
+        buckets[i].append({"word": w.word, "start": w.start, "end": w.end})
+    return buckets
+
+
 def generate_transcription(video_path, language='auto'):
+    audio_path = None
     try:
-        model = whisper.load_model("base")
-        transcription_options = {
-            'word_timestamps': True,
-            'verbose': True,
+        audio_path = _extract_audio_for_openai(video_path)
+        client = OpenAI()
+        request_kwargs = {
+            "model": "whisper-1",
+            "response_format": "verbose_json",
+            "timestamp_granularities": ["word", "segment"],
         }
-        if language != 'auto':
-            transcription_options['language'] = language
-        result = model.transcribe(video_path, **transcription_options)
+        if language and language != 'auto':
+            request_kwargs["language"] = language
+        with open(audio_path, "rb") as f:
+            response = client.audio.transcriptions.create(file=f, **request_kwargs)
+
+        bucketed = _bucket_words_into_segments(response.words or [], response.segments)
+        segments = [
+            {
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "words": bucketed[idx],
+            }
+            for idx, seg in enumerate(response.segments)
+        ]
         logger.info(f"Transcription generated successfully for video: {video_path}")
-        return result
+        return {"text": response.text, "segments": segments}
     except Exception as e:
         logger.error(f"Error in transcription: {str(e)}")
         raise
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
 
 def get_video_resolution(video_path):
     try:

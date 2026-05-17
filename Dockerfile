@@ -164,32 +164,22 @@ RUN fc-cache -f -v
 # Set work directory
 WORKDIR /app
 
-# Set environment variable for Whisper cache
-ENV WHISPER_CACHE_DIR="/app/whisper_cache"
-
-# Create cache directory (no need for chown here yet)
-RUN mkdir -p ${WHISPER_CACHE_DIR} 
-
 # Copy the requirements file first to optimize caching
 COPY requirements.txt .
 
-# Install Python dependencies, upgrade pip 
+# Install Python dependencies, upgrade pip
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install openai-whisper && \
     pip install playwright && \
-    pip install jsonschema 
+    pip install jsonschema
 
-# Create the appuser 
-RUN useradd -m appuser 
+# Create the appuser
+RUN useradd -m appuser
 
-# Give appuser ownership of the /app directory (including whisper_cache)
-RUN chown appuser:appuser /app 
+# Give appuser ownership of the /app directory
+RUN chown appuser:appuser /app
 
-# Important: Switch to the appuser before downloading the model
 USER appuser
-
-RUN python -c "import os; print(os.environ.get('WHISPER_CACHE_DIR')); import whisper; whisper.load_model('base')"
 
 # Install Playwright Chromium browser as appuser
 RUN playwright install chromium

@@ -17,10 +17,11 @@
 
 
 import os
-import whisper
+import tempfile
+import ffmpeg
 import srt
 from datetime import timedelta
-from whisper.utils import WriteSRT, WriteVTT
+from openai import OpenAI
 from services.file_management import download_file
 import logging
 from config import LOCAL_STORAGE_PATH
@@ -29,31 +30,62 @@ from config import LOCAL_STORAGE_PATH
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+
+def _extract_audio_for_openai(media_path):
+    """Strip media to a 64kbps mono mp3 to stay under OpenAI's 25MB upload limit."""
+    fd, audio_path = tempfile.mkstemp(suffix=".mp3", dir=LOCAL_STORAGE_PATH)
+    os.close(fd)
+    (
+        ffmpeg
+        .input(media_path)
+        .output(audio_path, vn=None, acodec="libmp3lame", audio_bitrate="64k", ac=1)
+        .overwrite_output()
+        .run(quiet=True)
+    )
+    return audio_path
+
+
+def _openai_transcribe(audio_path, task, word_timestamps, language):
+    """Call the OpenAI Whisper API and return a dict shaped like the local Whisper result."""
+    client = OpenAI()
+    with open(audio_path, "rb") as f:
+        if task == "translate":
+            # Translations endpoint outputs English; it does not support word-level timestamps.
+            response = client.audio.translations.create(
+                file=f,
+                model="whisper-1",
+                response_format="verbose_json",
+            )
+        else:
+            kwargs = {
+                "file": f,
+                "model": "whisper-1",
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["word", "segment"] if word_timestamps else ["segment"],
+            }
+            if language:
+                kwargs["language"] = language
+            response = client.audio.transcriptions.create(**kwargs)
+
+    segments = [
+        {"start": seg.start, "end": seg.end, "text": seg.text}
+        for seg in (response.segments or [])
+    ]
+    return {"text": response.text, "segments": segments}
+
+
 def process_transcribe_media(media_url, task, include_text, include_srt, include_segments, word_timestamps, response_type, language, job_id, words_per_line=None):
     """Transcribe or translate media and return the transcript/translation, SRT or VTT file path."""
     logger.info(f"Starting {task} for media URL: {media_url}")
     input_filename = download_file(media_url, os.path.join(LOCAL_STORAGE_PATH, f"{job_id}_input"))
     logger.info(f"Downloaded media to local file: {input_filename}")
 
+    audio_path = None
     try:
-        # Load a larger model for better translation quality
-        #model_size = "large" if task == "translate" else "base"
-        model_size = "base"
-        model = whisper.load_model(model_size)
-        logger.info(f"Loaded Whisper {model_size} model")
-
-        # Configure transcription/translation options
-        options = {
-            "task": task,
-            "word_timestamps": word_timestamps,
-            "verbose": False
-        }
-
-        # Add language specification if provided
-        if language:
-            options["language"] = language
-
-        result = model.transcribe(input_filename, **options)
+        audio_path = _extract_audio_for_openai(input_filename)
+        logger.info(f"Extracted audio to {audio_path} for OpenAI Whisper API")
+        result = _openai_transcribe(audio_path, task, word_timestamps, language)
+        logger.info(f"OpenAI Whisper API {task} completed")
         
         # For translation task, the result['text'] will be in English
         text = None
@@ -155,3 +187,9 @@ def process_transcribe_media(media_url, task, include_text, include_srt, include
     except Exception as e:
         logger.error(f"{task.capitalize()} failed: {str(e)}")
         raise
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
