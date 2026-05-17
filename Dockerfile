@@ -169,9 +169,9 @@ COPY requirements.txt .
 
 # Install Python dependencies, upgrade pip
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install playwright && \
-    pip install jsonschema
+    pip install --no-cache-dir --retries 10 --timeout 300 -r requirements.txt && \
+    pip install --no-cache-dir --retries 10 --timeout 300 playwright && \
+    pip install --no-cache-dir --retries 10 --timeout 300 jsonschema
 
 # Create the appuser
 RUN useradd -m appuser
