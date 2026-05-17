@@ -173,12 +173,16 @@ RUN mkdir -p ${WHISPER_CACHE_DIR}
 # Copy the requirements file first to optimize caching
 COPY requirements.txt .
 
-# Install Python dependencies, upgrade pip 
+# Install Python dependencies, upgrade pip
+# Install CPU-only torch first from the PyTorch index so the openai-whisper resolve
+# doesn't pull ~2GB of unused NVIDIA CUDA wheels from PyPI (Cloud Run is CPU-only).
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install openai-whisper && \
-    pip install playwright && \
-    pip install jsonschema 
+    pip install --no-cache-dir --retries 10 --timeout 300 \
+        --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir --retries 10 --timeout 300 -r requirements.txt && \
+    pip install --no-cache-dir --retries 10 --timeout 300 openai-whisper && \
+    pip install --no-cache-dir --retries 10 --timeout 300 playwright && \
+    pip install --no-cache-dir --retries 10 --timeout 300 jsonschema
 
 # Create the appuser 
 RUN useradd -m appuser 
