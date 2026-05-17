@@ -19,21 +19,25 @@ Base URL: `us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/
 | `original-eccbe04` / `original-latest` | docs/session-notes | eccbe04 | 1.70 GB | Local Whisper (`base` model), ffmpeg + Playwright + gnutls |
 | `openai-whisper-0381687` / `openai-latest` | feat/openai-whisper-swap | 0381687 | 1.08 GB | OpenAI Whisper API + fail-fast on missing `OPENAI_API_KEY` |
 | `openai-whisper-f4254b6` (orphaned) | feat/openai-whisper-swap | f4254b6 | 1.08 GB | Same as above but no fail-fast — kept as rollback point |
-| `secured-v4` / `secured-latest` | docs/session-notes | (this commit) | TBD | Multi-stage, no Playwright, no gnutls, no python3.13. **Current shipping candidate.** |
+| `secured-925622a` / `secured-latest` | docs/session-notes | 925622a | TBD (3.08 GB unc) | Multi-stage local-Whisper, no Playwright, no gnutls, no python3.13. **Shipping candidate for nca-local.** |
+| `secured-openai-3ed5951` / `secured-openai-latest` | feat/openai-whisper-swap | 3ed5951 | TBD (1.22 GB unc) | Multi-stage OpenAI, no Playwright, no gnutls, no python3.13, no torch. **Shipping candidate for nca-openai.** |
 
-Net savings on OpenAI variant: **~620 MB compressed (36%)**, ~1.86 GB uncompressed (4.82 GB → 2.96 GB).
-`secured-v4` is **3.08 GB uncompressed** — keeps local Whisper but adds multi-stage + drops Playwright/gnutls. Equivalent OpenAI build (drop whisper preload) would land near 2.4 GB uncompressed.
+Sizes uncompressed:
+- Original local-Whisper: 4.82 GB → `secured-925622a`: **3.08 GB** (-36%)
+- Original OpenAI: 2.96 GB → `secured-openai-3ed5951`: **1.22 GB** (-59%)
+- OpenAI multistage vs original-original: **-75%**
 
 ### Git branches
 
 - **`docs/session-notes`** — original codebase + the minimum changes needed to make it actually build (pip retries, CPU-only torch wheel). Image source for `original-*`.
 - **`feat/openai-whisper-swap`** — branched off `docs/session-notes` (commit 731be04). Replaces local Whisper with OpenAI API; drops torch + openai-whisper from deps. Image source for `openai-*`.
 
-Four commits on `feat/openai-whisper-swap` on top of `docs/session-notes` base:
+Five commits on `feat/openai-whisper-swap` on top of `docs/session-notes` base:
 - `3fd4d0e` — swap `services/ass_toolkit.py` + `services/v1/media/media_transcribe.py`; drop `openai-whisper` + `torch` from requirements.txt; remove whisper preload + WHISPER_CACHE_DIR from Dockerfile
 - `ebe30ac` — also swap legacy v0 `services/transcription.py` (was missed; would have crashed startup)
 - `f4254b6` — add `--retries 10 --timeout 300` to pip installs
 - `0381687` — fail-fast validation: `OPENAI_API_KEY` is required at startup
+- `3ed5951` — cherry-pick of 925622a (security multi-stage Dockerfile), adapted for OpenAI: no torch, no openai-whisper, no whisper preload
 
 ### Smoke test results (both images)
 
@@ -243,19 +247,81 @@ Apple Silicon: add `--platform linux/amd64` when running (image is amd64).
 
 Local-dev option: `docker compose -f docker-compose.local.minio.n8n.yml up -d` → API on :8080, MinIO console on :9001, n8n on :5678.
 
-### Deploy to Cloud Run (example, not yet executed)
+### Deploy to Cloud Run — two services, secured images, GCS storage
 
+Plan: two separate services so each variant scales independently.
+
+**Common prep (one-time):**
 ```bash
-gcloud run deploy nca-toolkit \
-  --image=us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:openai-latest \
-  --region=us-central1 \
-  --platform=managed \
-  --memory=8Gi --cpu=4 --timeout=3600 \
-  --allow-unauthenticated \
-  --set-env-vars API_KEY=...,OPENAI_API_KEY=sk-...,S3_ENDPOINT_URL=...,S3_ACCESS_KEY=...,S3_SECRET_KEY=...,S3_BUCKET_NAME=...,S3_REGION=...
+# 1. Service account for the apps. Needs storage.objectAdmin on the bucket.
+SA=nca-toolkit@home-automations-483505.iam.gserviceaccount.com
+gcloud iam service-accounts create nca-toolkit \
+  --project=home-automations-483505 \
+  --display-name="NCA toolkit Cloud Run runtime"
+
+gsutil iam ch serviceAccount:${SA}:objectAdmin gs://YOUR-BUCKET-NAME
+
+# 2. Service-account key JSON (because config.py reads GCP_SA_CREDENTIALS as a string).
+#    For tighter posture later, swap to Workload Identity + remove this env var.
+gcloud iam service-accounts keys create ./nca-sa.json --iam-account=${SA}
+GCP_SA_JSON=$(cat ./nca-sa.json | tr -d '\n')
 ```
 
-For long jobs (>60 min), also set `GCP_JOB_NAME` and use Cloud Run Jobs.
+**Service 1 — `nca-local` (local Whisper, secured-925622a):**
+```bash
+AR=us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit
+
+gcloud run deploy nca-local \
+  --project=home-automations-483505 \
+  --image=${AR}:secured-latest \
+  --region=us-central1 \
+  --platform=managed \
+  --service-account=${SA} \
+  --memory=8Gi --cpu=4 \
+  --timeout=3600 \
+  --concurrency=1 \
+  --max-instances=3 \
+  --allow-unauthenticated \
+  --set-env-vars=API_KEY=YOUR-API-KEY,GCP_BUCKET_NAME=YOUR-BUCKET-NAME,GUNICORN_WORKERS=2,GUNICORN_TIMEOUT=3000 \
+  --set-env-vars=^@^GCP_SA_CREDENTIALS=${GCP_SA_JSON}
+```
+
+Notes:
+- `--concurrency=1` because Whisper-base + ffmpeg saturate 4 vCPU on one request. Multiple concurrent requests would thrash.
+- `--timeout=3600` is the Cloud Run Services max (60 min). If a job needs longer, switch to Cloud Run Jobs (set `GCP_JOB_NAME`).
+- `^@^` is a gcloud env-var-list delimiter override — needed because the SA JSON contains commas.
+
+**Service 2 — `nca-openai` (OpenAI Whisper, secured-openai-3ed5951):**
+```bash
+gcloud run deploy nca-openai \
+  --project=home-automations-483505 \
+  --image=${AR}:secured-openai-latest \
+  --region=us-central1 \
+  --platform=managed \
+  --service-account=${SA} \
+  --memory=2Gi --cpu=2 \
+  --timeout=900 \
+  --concurrency=4 \
+  --max-instances=10 \
+  --allow-unauthenticated \
+  --set-env-vars=API_KEY=YOUR-API-KEY,OPENAI_API_KEY=sk-...,GCP_BUCKET_NAME=YOUR-BUCKET-NAME,GUNICORN_WORKERS=2,GUNICORN_TIMEOUT=600 \
+  --set-env-vars=^@^GCP_SA_CREDENTIALS=${GCP_SA_JSON}
+```
+
+Notes:
+- Smaller resources because the heavy work (transcription) is offloaded to OpenAI. ffmpeg burn-in is the bulk of local CPU.
+- `--timeout=900` (15 min) is plenty: OpenAI transcription takes ~1 min for 60-min audio. ffmpeg burn-in is the bound.
+- `--concurrency=4` because the workers are mostly I/O-waiting on OpenAI, not CPU.
+
+**Smoke test after deploy:**
+```bash
+URL=$(gcloud run services describe nca-openai --region=us-central1 --format='value(status.url)')
+curl -X POST "${URL}/v1/toolkit/test" -H "X-API-Key: YOUR-API-KEY"
+```
+
+**Rollback:** redeploy with the previous tag. Both `original-*` and `openai-whisper-*` are still in Artifact Registry.
+
+For jobs that genuinely need >60 min (e.g. multi-hour local-Whisper transcription), use Cloud Run Jobs with `GCP_JOB_NAME` instead of Services.
 
 ---
 
@@ -322,13 +388,13 @@ Resolved this session:
 - ✅ Multi-stage Dockerfile rewrite ([Dockerfile.multistage](Dockerfile.multistage))
 - ✅ Playwright dropped
 - ✅ CVE remediation (20/21 closed, 6 remaining all unreachable)
+- ✅ Multi-stage applied to both variants. `secured-925622a` (local) + `secured-openai-3ed5951` (OpenAI) pushed to Artifact Registry as `secured-latest` and `secured-openai-latest`.
 
 Still open:
-1. **Cloud Run deploy** — not yet executed. Decide region, memory, CPU, env vars, and whether to use Cloud Run Services (60-min cap, but OpenAI swap fits inside) or Cloud Run Jobs (24h cap).
+1. **Cloud Run deploy** — gcloud commands for both services in §6 ("Deploy to Cloud Run"). User to run with their secrets.
 2. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise. (Deferred.)
 3. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
 4. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
-5. **Apply multi-stage pattern to OpenAI variant** — copy [Dockerfile.multistage](Dockerfile.multistage) to that branch with whisper preload + WHISPER_CACHE_DIR removed.
 
 ---
 
