@@ -116,7 +116,7 @@ RUN git clone https://github.com/libass/libass.git && \
 # Build and install FFmpeg with all required features
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
     cd ffmpeg && \
-    git checkout n7.0.2 && \
+    git checkout n8.1.1 && \
     PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" \
     CFLAGS="-I/usr/include/freetype2" \
     LDFLAGS="-L/usr/lib/x86_64-linux-gnu" \
