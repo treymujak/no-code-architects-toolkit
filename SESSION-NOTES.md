@@ -2,7 +2,7 @@
 
 Working doc capturing Claude Code sessions on this repo. Use this to pick up in VS Code without losing context.
 
-**Status as of this update (2026-05-18):** three Docker images built. OpenAI Whisper swap done. CVE remediation done — multi-stage rewrite, Playwright dropped, gnutls removed, base packages upgraded. Original 21-CVE list: 20 closed, 1 unfixable upstream. Final image (`secured-v4`) has 6 remaining HIGH findings, all upstream-unfixed and assessed as unreachable in this app. Not yet deployed to Cloud Run.
+**Status as of this update (2026-05-18):** three Docker images built. OpenAI Whisper swap done. CVE remediation done — multi-stage rewrite, Playwright dropped, gnutls removed, base packages upgraded. Original 21-CVE list: 20 closed, 1 unfixable upstream. Final image (`secured-v4`) has 6 remaining HIGH findings, all upstream-unfixed and assessed as unreachable in this app. **Live on Cloud Run:** `nca-toolkit` in europe-west1, running `secured-925622a`, GCS SA credential via Secret Manager. OpenAI variant not yet deployed.
 
 ---
 
@@ -247,9 +247,82 @@ Apple Silicon: add `--platform linux/amd64` when running (image is amd64).
 
 Local-dev option: `docker compose -f docker-compose.local.minio.n8n.yml up -d` → API on :8080, MinIO console on :9001, n8n on :5678.
 
-### Deploy to Cloud Run — two services, secured images, GCS storage
+### Deploy to Cloud Run — current live state
 
-Plan: two separate services so each variant scales independently.
+**Live service (as of 2026-05-18):**
+
+| Property | Value |
+|---|---|
+| Service name | `nca-toolkit` |
+| Region | `europe-west1` |
+| URL | https://nca-toolkit-108769234292.europe-west1.run.app |
+| Image | `us-docker.pkg.dev/home-automations-483505/no-code-architect-tool-box/nca-toolkit:secured-925622a` (local Whisper, multi-stage) |
+| Runtime SA | `no-code-toolkit-service-ccount@home-automations-483505.iam.gserviceaccount.com` |
+| Memory / CPU | 16Gi / 4 vCPU |
+| Timeout | 300s |
+| Concurrency | 80 |
+| Current revision | `nca-toolkit-00006-xh6` |
+| Env vars | `API_KEY` (plain), `GCP_BUCKET_NAME=olah-tv-test-bucket` (plain), `GCP_SA_CREDENTIALS` → Secret Manager |
+
+**Secret Manager:**
+- Secret name: `gcp-sa-credentials` (replication=automatic)
+- Source: a service-account JSON downloaded locally (since deleted from disk per rotation hygiene)
+- Bound to env var `GCP_SA_CREDENTIALS` at `:latest` — Cloud Run injects the JSON content at boot, which is what [services/gcp_toolkit.py:47](services/gcp_toolkit.py#L47) expects for `json.loads()`.
+- IAM: `${runtime-SA}` has `roles/secretmanager.secretAccessor` on this secret only.
+
+**How this was set up** (commands actually run, for replay/audit):
+```bash
+PROJECT=home-automations-483505
+SA="no-code-toolkit-service-ccount@${PROJECT}.iam.gserviceaccount.com"
+
+# 1. Enable Secret Manager API + create the secret from local JSON
+gcloud services enable secretmanager.googleapis.com --project="$PROJECT"
+gcloud secrets create gcp-sa-credentials \
+  --project="$PROJECT" \
+  --data-file="$HOME/Downloads/home-automations-483505-f14346514121.json" \
+  --replication-policy=automatic
+
+# 2. Grant the runtime SA read access on this secret
+gcloud secrets add-iam-policy-binding gcp-sa-credentials \
+  --project="$PROJECT" \
+  --member="serviceAccount:${SA}" \
+  --role=roles/secretmanager.secretAccessor
+
+# 3. Wire the secret in (remove plain env var first — Cloud Run forbids same key with two sources)
+gcloud run services update nca-toolkit \
+  --project="$PROJECT" --region=europe-west1 \
+  --remove-env-vars=GCP_SA_CREDENTIALS \
+  --update-secrets=GCP_SA_CREDENTIALS=gcp-sa-credentials:latest
+
+# 4. Strip stale GOOGLE_APPLICATION_CREDENTIALS env var (was holding JSON inline; not used by this app)
+gcloud run services update nca-toolkit \
+  --project="$PROJECT" --region=europe-west1 \
+  --remove-env-vars=GOOGLE_APPLICATION_CREDENTIALS
+```
+
+**Key rotation:**
+```bash
+gcloud secrets versions add gcp-sa-credentials --data-file=./new-sa.json
+gcloud run services update nca-toolkit --project=home-automations-483505 --region=europe-west1
+# Last command forces re-pull of :latest on next revision.
+```
+
+**Smoke probe after deploy:**
+```bash
+curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+  https://nca-toolkit-108769234292.europe-west1.run.app/v1/toolkit/test
+# Expect 401 (auth required). Hit with `-H "X-API-Key: ..."` to exercise GCS upload path.
+```
+
+**Caveats on current sizing:**
+- Concurrency=80 on a local-Whisper image is aggressive — Whisper-base saturates 4 vCPU on a single transcription. If you see request pile-up and 5xxs under load, drop to `--concurrency=1` (matches the planning recommendation below) or switch to the OpenAI variant.
+- Timeout=300s caps any single request at 5 min. Long transcriptions will 504. Either raise to `--timeout=3600` (60-min Cloud Run Services max) or use Cloud Run Jobs via `GCP_JOB_NAME`.
+
+---
+
+### Deploy plan — alt layout (two services, not yet executed)
+
+Original plan was two services so each variant scales independently. Kept here for reference; only `nca-toolkit` (single service running local-Whisper) is live today.
 
 **Common prep (one-time):**
 ```bash
@@ -389,12 +462,18 @@ Resolved this session:
 - ✅ Playwright dropped
 - ✅ CVE remediation (20/21 closed, 6 remaining all unreachable)
 - ✅ Multi-stage applied to both variants. `secured-925622a` (local) + `secured-openai-3ed5951` (OpenAI) pushed to Artifact Registry as `secured-latest` and `secured-openai-latest`.
+- ✅ Cloud Run deploy — `nca-toolkit` live in `europe-west1` on `secured-925622a`. GCS credentials via Secret Manager (`gcp-sa-credentials`). HTTP 401 verified.
 
 Still open:
-1. **Cloud Run deploy** — gcloud commands for both services in §6 ("Deploy to Cloud Run"). User to run with their secrets.
-2. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise. (Deferred.)
-3. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
-4. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
+1. **Cloud Run deploy — OpenAI variant** — not yet deployed. Plan for `nca-openai` in §6 alt layout. Currently only the local-Whisper variant (`nca-toolkit`) is live.
+2. **End-to-end GCS upload test** — health probe returns 401 (auth works), but no authenticated call has been made yet to exercise the secret + bucket path. Run with `-H "X-API-Key: ..."` against `/v1/toolkit/test` (or a real endpoint that uploads to GCS) to confirm the SA secret actually loads + uploads succeed.
+3. **Tighten sizing on `nca-toolkit`** — current concurrency=80 with local Whisper will pile up under load. Drop to `--concurrency=1` or switch to OpenAI variant.
+4. **Cloud Run timeout** — currently 300s. Long transcriptions will 504. Raise to 3600 if running local Whisper end-to-end.
+5. **Job-file cleanup snippet** in [app.py](app.py) — §4a above. RAM leak in production otherwise. (Deferred.)
+6. **Audio chunking** for >52-min files on the OpenAI variant (25 MB upload cap at 64 kbps).
+7. **Merge `feat/openai-whisper-swap` → `docs/session-notes` (or main)** if ready to make OpenAI the default.
+8. **Refactor GCP auth to support ADC** — currently `GCP_SA_CREDENTIALS` is required everywhere ([config.py:38](config.py#L38), [services/gcp_toolkit.py:37](services/gcp_toolkit.py#L37), [services/gcp_toolkit.py:78](services/gcp_toolkit.py#L78), [services/v1/gcp/upload.py:30](services/v1/gcp/upload.py#L30), [routes/gdrive_upload.py:42](routes/gdrive_upload.py#L42)) and must hold the **JSON content as a string**, not a file path. Cloud Run already injects an identity via the attached service account — fall back to `google.auth.default()` when `GCP_SA_CREDENTIALS` is unset and `validate_env_vars('GCP')` only requires `GCP_BUCKET_NAME`. Removes a long-lived secret from runtime config.
+9. **Surface silent GCS init failure** — [services/gcp_toolkit.py:53-54](services/gcp_toolkit.py#L53-L54) swallows the real error and returns `None`, so any misconfig (path-instead-of-JSON, malformed JSON, wrong SA) surfaces only as "GCS client is not initialized" later. Add `exc_info=True` and re-raise on `ValueError`/`json.JSONDecodeError` at minimum.
 
 ---
 
