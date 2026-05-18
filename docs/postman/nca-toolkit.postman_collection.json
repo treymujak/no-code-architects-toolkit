@@ -1,0 +1,786 @@
+{
+  "info": {
+    "_postman_id": "nca-toolkit-coll-001",
+    "name": "NCA Toolkit API",
+    "description": "Smoke + integration tests for the NCA toolkit API. See docs/postman/README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "1 — Auth & Health",
+      "item": [
+        {
+          "name": "GET /v1/toolkit/test (no key) → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Response time < 2s', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "test"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/toolkit/test (wrong key) → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "definitely-not-the-key" }],
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "test"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/toolkit/test (correct key) → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 2s', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+                  "pm.test('Body looks healthy', () => {",
+                  "  const r = pm.response.json();",
+                  "  pm.expect(r).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "test"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/toolkit/authenticate → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 1s', () => pm.expect(pm.response.responseTime).to.be.below(1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/authenticate",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "authenticate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Job Status",
+      "item": [
+        {
+          "name": "POST /v1/toolkit/job/status (missing job_id) → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/job/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "job", "status"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/toolkit/job/status (fake id) → resolves with status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"non-existent-job-id-for-test\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/job/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "job", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 — Media — info",
+      "item": [
+        {
+          "name": "POST /v1/media/metadata (missing media_url) → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/metadata",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "metadata"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/media/metadata (sync) → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 30s', () => pm.expect(pm.response.responseTime).to.be.below(30000));",
+                  "pm.test('Has standard envelope', () => {",
+                  "  const r = pm.response.json();",
+                  "  pm.expect(r).to.have.property('code');",
+                  "  pm.expect(r).to.have.property('job_id');",
+                  "  pm.expect(r).to.have.property('response');",
+                  "});",
+                  "const r = pm.response.json();",
+                  "if (r.job_id) pm.environment.set('lastJobId', r.job_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleVideoUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/metadata",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "metadata"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/media/silence → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 60s', () => pm.expect(pm.response.responseTime).to.be.below(60000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"duration\": 0.5\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/silence",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "silence"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/media/transcribe (SLOW on local-Whisper)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 202', () => pm.expect([200, 202]).to.include(pm.response.code));",
+                  "pm.test('Response time < 120s', () => pm.expect(pm.response.responseTime).to.be.below(120000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"task\": \"transcribe\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/transcribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "transcribe"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 — Media — convert",
+      "item": [
+        {
+          "name": "POST /v1/media/convert/mp3 → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleVideoUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/convert/mp3",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "convert", "mp3"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/media/convert (format=wav) → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"format\": \"wav\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/convert",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "convert"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/BETA/media/download → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/BETA/media/download",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "BETA", "media", "download"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 — Video",
+      "item": [
+        {
+          "name": "POST /v1/video/thumbnail → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"second\": 1\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/thumbnail",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "thumbnail"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/video/trim → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"start\": \"00:00:01\",\n  \"end\": \"00:00:03\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/trim",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "trim"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/video/cut → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"cuts\": [\n    { \"start\": \"00:00:02\", \"end\": \"00:00:04\" }\n  ]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/cut",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "cut"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/video/split → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"splits\": [\n    { \"start\": \"00:00:00\", \"end\": \"00:00:03\" },\n    { \"start\": \"00:00:03\", \"end\": \"00:00:06\" }\n  ]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/split",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "split"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/video/concatenate → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_urls\": [\n    { \"video_url\": \"{{sampleVideoUrl}}\" },\n    { \"video_url\": \"{{sampleVideoUrl2}}\" }\n  ]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/concatenate",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "concatenate"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/video/caption (SLOW — invokes Whisper)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 202', () => pm.expect([200, 202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"settings\": {\n    \"style\": \"classic\",\n    \"font_family\": \"Arial\",\n    \"font_size\": 24\n  }\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/video/caption",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "video", "caption"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 — Audio",
+      "item": [
+        {
+          "name": "POST /v1/audio/concatenate → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"audio_urls\": [\n    { \"audio_url\": \"{{sampleAudioUrl}}\" },\n    { \"audio_url\": \"{{sampleAudioUrl2}}\" }\n  ]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/audio/concatenate",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "audio", "concatenate"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 — Image",
+      "item": [
+        {
+          "name": "POST /v1/image/convert/video → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"image_url\": \"{{sampleImageUrl}}\",\n  \"length\": 3,\n  \"frame_rate\": 24\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/image/convert/video",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "image", "convert", "video"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8 — Cloud upload",
+      "item": [
+        {
+          "name": "POST /v1/gcp/upload → 200 (tests SA secret wiring)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Body has a public URL', () => {",
+                  "  const r = pm.response.json();",
+                  "  const url = r.response || r.url || (r.data && r.data.url);",
+                  "  pm.expect(JSON.stringify(r)).to.match(/storage\\.googleapis|googleusercontent|https?:\\/\\//);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleAudioUrl}}\",\n  \"bucket_name\": \"{{gcpBucketName}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/gcp/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "gcp", "upload"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9 — FFmpeg + Code",
+      "item": [
+        {
+          "name": "POST /v1/ffmpeg/compose → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"inputs\": [\n    { \"file_url\": \"{{sampleVideoUrl}}\" }\n  ],\n  \"outputs\": [\n    {\n      \"options\": [\n        { \"option\": \"-t\", \"argument\": \"2\" },\n        { \"option\": \"-c:v\", \"argument\": \"libx264\" }\n      ]\n    }\n  ]\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/ffmpeg/compose",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "ffmpeg", "compose"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/code/execute/python → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Python output reaches us', () => {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.match(/hello-from-postman/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"print('hello-from-postman')\",\n  \"timeout\": 10\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/code/execute/python",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "code", "execute", "python"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 — Async pattern (webhook)",
+      "item": [
+        {
+          "name": "POST /v1/media/metadata with webhook_url → 202",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('Returns a job_id we can poll', () => {",
+                  "  const r = pm.response.json();",
+                  "  pm.expect(r).to.have.property('job_id');",
+                  "  if (r.job_id) pm.environment.set('lastJobId', r.job_id);",
+                  "});",
+                  "console.log('Check webhook receiver at', pm.environment.get('webhookUrl'), 'in a few seconds');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleVideoUrl}}\",\n  \"webhook_url\": \"{{webhookUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/metadata",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "metadata"]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/toolkit/job/status (poll {{lastJobId}})",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Status field present', () => {",
+                  "    const r = pm.response.json();",
+                  "    pm.expect(JSON.stringify(r)).to.match(/queued|running|done|failed|submitted/);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"job_id\": \"{{lastJobId}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/toolkit/job/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "toolkit", "job", "status"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
