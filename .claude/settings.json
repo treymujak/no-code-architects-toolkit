@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcloud config *)",
+      "Bash(gcloud auth *)",
+      "Bash(gcloud artifacts *)",
+      "Bash(docker version *)",
+      "Bash(docker buildx *)",
+      "Bash(docker info *)",
+      "Bash(tee /tmp/nca-build-original.log)",
+      "Bash(git checkout *)",
+      "Read(//private/tmp/**)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/ass_toolkit.py'\\).read\\(\\)\\); print\\('ass_toolkit OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/v1/media/media_transcribe.py'\\).read\\(\\)\\); print\\('media_transcribe OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/transcription.py'\\).read\\(\\)\\); print\\('transcription.py OK'\\)\")",
+      "Bash(git stash *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(docker rm *)",
+      "Bash(docker run *)",
+      "Bash(gog --version)",
+      "Skill(gog)",
+      "Skill(gog:*)",
+      "Bash(gog send *)",
+      "Bash(git push *)",
+      "Bash(trivy --version)",
+      "Bash(grype version *)",
+      "Bash(trivy image *)",
+      "Bash(awk '/Total: [0-9]+ \\\\\\(HIGH/,/^$/' /tmp/trivy-secured-v2.txt)",
+      "Bash(awk '/^nca-toolkit:secured-v2 \\\\\\(debian/,/^Python /' /tmp/trivy-secured-v2.txt)",
+      "Bash(git ls-tree *)",
+      "Bash(git cherry-pick *)",
+      "Bash(gcloud run *)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp"
+    ]
+  }
+}
