@@ -781,6 +781,683 @@
           }
         }
       ]
+    },
+    {
+      "name": "11 — Legacy v0 routes",
+      "description": "Pre-v1 endpoints kept for backwards compatibility. Mostly thin wrappers; prefer the v1 equivalents in new code. Each entry documents the v1 successor in its description.",
+      "item": [
+        {
+          "name": "POST /audio-mixing (basic)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 60s', () => pm.expect(pm.response.responseTime).to.be.below(60000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"audio_url\": \"{{sampleAudioUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/audio-mixing",
+              "host": ["{{baseUrl}}"],
+              "path": ["audio-mixing"]
+            },
+            "description": "Mix an external audio track onto a video. Defaults to keeping both at 100% and using the video's length for output. No v1 equivalent yet — closest pattern is /v1/ffmpeg/compose with amix filter."
+          }
+        },
+        {
+          "name": "POST /audio-mixing (full options)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"audio_url\": \"{{sampleAudioUrl}}\",\n  \"video_vol\": 30,\n  \"audio_vol\": 100,\n  \"output_length\": \"audio\",\n  \"id\": \"postman-audio-mixing-full\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/audio-mixing",
+              "host": ["{{baseUrl}}"],
+              "path": ["audio-mixing"]
+            },
+            "description": "Duck the original video audio to 30%, keep external audio at 100%, end output when the audio track ends (output_length='audio'). 'id' is echoed back in the response envelope — useful as a caller-side correlation key."
+          }
+        },
+        {
+          "name": "GET /authenticate (legacy) → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/authenticate",
+              "host": ["{{baseUrl}}"],
+              "path": ["authenticate"]
+            },
+            "description": "Legacy auth-check endpoint. Same behavior as /v1/toolkit/authenticate; prefer the v1 path in new integrations."
+          }
+        },
+        {
+          "name": "POST /caption-video (inline SRT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"srt\": \"{{sampleSrt}}\",\n  \"id\": \"postman-legacy-caption-srt\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/caption-video",
+              "host": ["{{baseUrl}}"],
+              "path": ["caption-video"]
+            },
+            "description": "Burn-in captions from an inline SRT string. The schema requires exactly one of {srt, ass}. v1 equivalent: /v1/video/caption with the same `srt` field but richer style options."
+          }
+        },
+        {
+          "name": "POST /caption-video (inline ASS + options)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"ass\": \"[Script Info]\\nScriptType: v4.00+\\nPlayResX: 1920\\nPlayResY: 1080\\n\\n[V4+ Styles]\\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Alignment\\nStyle: Default,Arial,48,&H00FFFFFF,&H00000000,&H80000000,1,1,2,2\\n\\n[Events]\\nFormat: Layer, Start, End, Style, Text\\nDialogue: 0,0:00:00.50,0:00:02.50,Default,Hello from ASS\\nDialogue: 0,0:00:02.50,0:00:05.00,Default,Line two\\n\",\n  \"options\": [\n    { \"option\": \"FontName\", \"value\": \"Arial\" },\n    { \"option\": \"PrimaryColour\", \"value\": \"&H00FFFFFF\" }\n  ],\n  \"id\": \"postman-legacy-caption-ass\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/caption-video",
+              "host": ["{{baseUrl}}"],
+              "path": ["caption-video"]
+            },
+            "description": "Burn-in pre-built ASS subtitles. The `options` array overlays libass style overrides. Useful when callers have generated ASS upstream (e.g. with /v1/media/generate/ass)."
+          }
+        },
+        {
+          "name": "POST /combine-videos (two clips) → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_urls\": [\n    { \"video_url\": \"{{sampleVideoUrl}}\" },\n    { \"video_url\": \"{{sampleVideoUrl2}}\" }\n  ],\n  \"id\": \"postman-legacy-combine\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/combine-videos",
+              "host": ["{{baseUrl}}"],
+              "path": ["combine-videos"]
+            },
+            "description": "Concatenate two videos end-to-end. v1 equivalent: /v1/video/concatenate (same payload shape)."
+          }
+        },
+        {
+          "name": "POST /extract-keyframes (sync)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response time < 60s', () => pm.expect(pm.response.responseTime).to.be.below(60000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"id\": \"postman-extract-keyframes-sync\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/extract-keyframes",
+              "host": ["{{baseUrl}}"],
+              "path": ["extract-keyframes"]
+            },
+            "description": "Extract every I-frame from the video as a JPG, upload to cloud storage, return the URL list. CPU + I/O heavy on long videos — prefer the webhook variant below for anything > 1 min."
+          }
+        },
+        {
+          "name": "POST /extract-keyframes (async webhook) → 202",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "const r = pm.response.json();",
+                  "if (r.job_id) pm.environment.set('lastJobId', r.job_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"video_url\": \"{{sampleVideoUrl}}\",\n  \"webhook_url\": \"{{webhookUrl}}\",\n  \"id\": \"postman-extract-keyframes-async\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/extract-keyframes",
+              "host": ["{{baseUrl}}"],
+              "path": ["extract-keyframes"]
+            },
+            "description": "Same operation queued. Returns 202 immediately with a job_id; final URL list arrives at webhook_url. Watch {{webhookUrl}} for the POST."
+          }
+        },
+        {
+          "name": "POST /gdrive-upload (required fields only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 (or 400 if folder_id placeholder)', () => pm.expect([200, 400, 500]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Response references Drive', () => pm.expect(pm.response.text()).to.match(/drive\\.google|files\\/|webContentLink/));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleAudioUrl}}\",\n  \"filename\": \"postman-test-sample.mp3\",\n  \"folder_id\": \"{{gdriveFolderId}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/gdrive-upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["gdrive-upload"]
+            },
+            "description": "Upload a file to Google Drive. Requires `file_url`, `filename`, `folder_id`. The runtime SA must have Editor on the target folder — share the folder with the SA email (see [SESSION-NOTES.md](../../SESSION-NOTES.md)). 400/500 here usually means the folder_id placeholder hasn't been replaced or the SA lacks Drive access."
+          }
+        },
+        {
+          "name": "POST /gdrive-upload (full options + webhook)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleVideoUrl}}\",\n  \"filename\": \"postman-test-sample.mp4\",\n  \"folder_id\": \"{{gdriveFolderId}}\",\n  \"mime_type\": \"video/mp4\",\n  \"chunk_size\": 5242880,\n  \"webhook_url\": \"{{webhookUrl}}\",\n  \"id\": \"postman-gdrive-full\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/gdrive-upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["gdrive-upload"]
+            },
+            "description": "Full payload: explicit `mime_type` (skips detection), 5 MiB chunked upload (`chunk_size`), async via `webhook_url`. Use this shape for large files."
+          }
+        },
+        {
+          "name": "POST /image-to-video (basic)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"image_url\": \"{{sampleImageUrl}}\",\n  \"length\": 4,\n  \"frame_rate\": 30\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/image-to-video",
+              "host": ["{{baseUrl}}"],
+              "path": ["image-to-video"]
+            },
+            "description": "Static image → 4-second 30 fps video. Range: length 1–60s, frame_rate 15–60. v1 equivalent: /v1/image/convert/video."
+          }
+        },
+        {
+          "name": "POST /image-to-video (with zoom)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"image_url\": \"{{sampleImageUrl}}\",\n  \"length\": 5,\n  \"frame_rate\": 30,\n  \"zoom_speed\": 50,\n  \"id\": \"postman-image-to-video-zoom\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/image-to-video",
+              "host": ["{{baseUrl}}"],
+              "path": ["image-to-video"]
+            },
+            "description": "Ken Burns-style zoom. `zoom_speed` is 0–100 — higher = more aggressive zoom over the clip length."
+          }
+        },
+        {
+          "name": "POST /media-to-mp3 (basic)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleVideoUrl}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/media-to-mp3",
+              "host": ["{{baseUrl}}"],
+              "path": ["media-to-mp3"]
+            },
+            "description": "Strip audio track to mp3 at default bitrate. v1 equivalent: /v1/media/convert/mp3."
+          }
+        },
+        {
+          "name": "POST /media-to-mp3 (with bitrate)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleVideoUrl}}\",\n  \"bitrate\": \"64k\",\n  \"id\": \"postman-mp3-64k\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/media-to-mp3",
+              "host": ["{{baseUrl}}"],
+              "path": ["media-to-mp3"]
+            },
+            "description": "Compressed mp3 at 64 kbps mono. Useful for keeping payloads under OpenAI's 25 MB transcription cap (~52 min at 64k). Bitrate must match pattern `^[0-9]+k$`."
+          }
+        },
+        {
+          "name": "POST /transcribe-media (output=transcript)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"output\": \"transcript\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/transcribe-media",
+              "host": ["{{baseUrl}}"],
+              "path": ["transcribe-media"]
+            },
+            "description": "Plain text transcript. v1 equivalent: /v1/media/transcribe (richer output, includes word-level timing)."
+          }
+        },
+        {
+          "name": "POST /transcribe-media (output=srt)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Looks SRT-shaped', () => {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.match(/-->/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"output\": \"srt\",\n  \"id\": \"postman-transcribe-srt\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/transcribe-media",
+              "host": ["{{baseUrl}}"],
+              "path": ["transcribe-media"]
+            },
+            "description": "SRT subtitle file. Feed the result directly to /v1/video/caption or /caption-video."
+          }
+        },
+        {
+          "name": "POST /transcribe-media (output=ass + max_chars)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Looks ASS-shaped', () => {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.match(/\\[Script Info\\]|Dialogue:/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"output\": \"ass\",\n  \"max_chars\": 40,\n  \"id\": \"postman-transcribe-ass\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/transcribe-media",
+              "host": ["{{baseUrl}}"],
+              "path": ["transcribe-media"]
+            },
+            "description": "ASS subtitle file with each Dialogue line capped at 40 chars (good for mobile-vertical layouts). `max_chars` reflows long segments."
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 — Additional v1 routes",
+      "description": "v1 endpoints not covered in folders 1–10: dedicated ASS generator (richer than caption-video's auto-ASS) and S3-compatible uploader.",
+      "item": [
+        {
+          "name": "POST /v1/media/generate/ass (defaults)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns ASS', () => {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.match(/\\[Script Info\\]|Dialogue:/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"id\": \"postman-genass-defaults\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/generate/ass",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "generate", "ass"]
+            },
+            "description": "Run Whisper + emit an ASS file with default style (classic, white-on-black, Arial 24, bottom-centered)."
+          }
+        },
+        {
+          "name": "POST /v1/media/generate/ass (full styling, highlight)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"canvas_width\": 1080,\n  \"canvas_height\": 1920,\n  \"settings\": {\n    \"style\": \"highlight\",\n    \"line_color\": \"&H00FFFFFF\",\n    \"word_color\": \"&H0000FFFF\",\n    \"outline_color\": \"&H00000000\",\n    \"font_family\": \"Arial\",\n    \"font_size\": 64,\n    \"bold\": true,\n    \"all_caps\": true,\n    \"max_words_per_line\": 3,\n    \"position\": \"middle_center\",\n    \"alignment\": \"center\",\n    \"outline_width\": 3,\n    \"shadow_offset\": 2\n  },\n  \"id\": \"postman-genass-tiktok\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/generate/ass",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "generate", "ass"]
+            },
+            "description": "TikTok-style vertical (1080×1920) ASS with highlight mode: the current word is colored yellow (&H0000FFFF), rest white, 3 words per line, all-caps. Burn-in with /v1/video/caption afterwards."
+          }
+        },
+        {
+          "name": "POST /v1/media/generate/ass (replace + exclude_time_ranges)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"media_url\": \"{{sampleAudioUrl}}\",\n  \"settings\": { \"style\": \"karaoke\", \"font_size\": 36 },\n  \"replace\": [\n    { \"find\": \"um\", \"replace\": \"\" },\n    { \"find\": \"like\", \"replace\": \"\" }\n  ],\n  \"exclude_time_ranges\": [\n    { \"start\": \"00:00:00.000\", \"end\": \"00:00:01.500\" }\n  ],\n  \"id\": \"postman-genass-clean\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/media/generate/ass",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "media", "generate", "ass"]
+            },
+            "description": "Clean up filler words via `replace`, drop the intro 1.5s via `exclude_time_ranges`. Both edits happen post-Whisper, pre-ASS-write — the original audio is untouched."
+          }
+        },
+        {
+          "name": "POST /v1/s3/upload (public)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns an HTTPS URL', () => {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.match(/https?:\\/\\//);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleAudioUrl}}\",\n  \"filename\": \"postman-test-sample.mp3\",\n  \"public\": true,\n  \"id\": \"postman-s3-public\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/s3/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "s3", "upload"]
+            },
+            "description": "Pipe a remote file into the configured S3 bucket and mark it world-readable. Requires S3_* env vars set on the service — the GCS-only deploy will 500 here. Mirror of /v1/gcp/upload for S3-compatible providers (DO Spaces, R2, Backblaze)."
+          }
+        },
+        {
+          "name": "POST /v1/s3/upload (private + download_headers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleVideoUrl}}\",\n  \"filename\": \"private-asset.mp4\",\n  \"public\": false,\n  \"download_headers\": {\n    \"Referer\": \"https://example.com\",\n    \"User-Agent\": \"nca-toolkit/1.0\"\n  },\n  \"id\": \"postman-s3-private-with-headers\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/s3/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "s3", "upload"]
+            },
+            "description": "Private upload (no ACL change). `download_headers` are sent on the SERVER side when fetching `file_url` — useful when the source requires a Referer or a signed-cookie/auth header. The headers never leak to the recipient."
+          }
+        },
+        {
+          "name": "POST /v1/s3/upload (async webhook) → 202",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "const r = pm.response.json();",
+                  "if (r.job_id) pm.environment.set('lastJobId', r.job_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"file_url\": \"{{sampleVideoUrl}}\",\n  \"filename\": \"async-upload.mp4\",\n  \"public\": true,\n  \"webhook_url\": \"{{webhookUrl}}\",\n  \"id\": \"postman-s3-async\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/v1/s3/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "s3", "upload"]
+            },
+            "description": "Same upload queued. 202 + job_id back immediately, final URL POSTed to webhook_url. Recommended for files > a few hundred MB to avoid Cloud Run request timeouts."
+          }
+        }
+      ]
     }
   ]
 }
